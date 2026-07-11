@@ -20,7 +20,11 @@ declare global {
 
 async function getSql(): Promise<import("sql.js").SqlJsStatic> {
   if (globalThis.__vip_sql) return globalThis.__vip_sql;
-  const wasmPath = path.join(process.cwd(), "node_modules", "sql.js", "dist", "sql-wasm.wasm");
+  // In production (Render), use the wasm file copied into /public at build time.
+  // In development, use node_modules directly.
+  const wasmPath = process.env.NODE_ENV === "production"
+    ? path.join(process.cwd(), "public", "sql-wasm.wasm")
+    : path.join(process.cwd(), "node_modules", "sql.js", "dist", "sql-wasm.wasm");
   globalThis.__vip_sql = await initSqlJs({ locateFile: () => wasmPath });
   return globalThis.__vip_sql;
 }
