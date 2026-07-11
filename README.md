@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Robert Plant VIP Membership Platform
+
+A world-class, luxury digital VIP membership platform for Robert Plant fans.
+
+> **This is not a normal website.** The public site is the entrance. The **Admin Portal** is the core of the business — every membership begins there.
+
+## Architecture
+
+Three separate portals built with Next.js App Router route groups:
+
+- **(public)** — Marketing site: homepage, membership tiers, benefits, FAQ, contact, login.
+- **admin** — Administrator control center: dashboard, members, cards, events, content, emails, analytics, settings.
+- **(member)** — Private VIP lounge: dashboard, digital card, membership, events, content, profile, support, settings.
+
+## Tech Stack
+
+- Next.js 16 + React 19 + TypeScript
+- TailwindCSS v4
+- Framer Motion
+- Recharts
+- Jose (sessions)
+- bcryptjs (password hashing)
+- QRCode.react
+- jsPDF / html-to-image / file-saver
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Default Credentials
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Admin**: `admin@robertplant.com` / `admin123`
+- **Demo Member**: `jane@example.com` / `temp123`
 
-## Learn More
+## Key Workflows
 
-To learn more about Next.js, take a look at the following resources:
+1. **Visitor** browses the public site. Visitors cannot self-register.
+2. **Administrator** logs into `/admin/login`, opens `/admin/members/new`, and creates a VIP member.
+3. The system automatically creates a secure account, membership, digital VIP card, QR code, and welcome email.
+4. The **member** logs in via `/login` and enters the private lounge centered on their digital VIP card.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+app/
+  (public)/          # Public marketing pages
+  admin/             # Admin portal (login + portal route group)
+    (portal)/        # Protected admin pages
+  (member)/          # Member portal
+  api/               # API routes for auth and member creation
+  verify/[id]/       # Public QR-code verification page
+components/
+  ui/                # Reusable UI primitives
+  admin/             # AdminSidebar, AdminTopBar
+  member/            # MemberSidebar
+  VIPCard.tsx        # Digital membership card
+lib/
+  data.ts            # Types, mock data store, analytics
+  auth.ts            # Session/JWT helpers
+  utils.ts           # cn, formatDate, generators
+```
 
-## Deploy on Vercel
+## Notes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- This first version uses an in-memory mock data store. For production, swap it for a real database (e.g., PostgreSQL + Drizzle ORM or Prisma).
+- Email sending is stubbed; integrate Resend, SendGrid, or Nodemailer for production.
+- Member passwords are hashed with bcryptjs. Sessions use signed JWT cookies.

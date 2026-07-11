@@ -1,26 +1,91 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-gold: #c9a84c;
+  --color-gold-light: #e8d5a3;
+  --color-gold-dark: #8a6d2f;
+  --color-rich-black: #0a0a0a;
+  --color-charcoal: #121212;
+  --color-charcoal-light: #1a1a1a;
+  --color-platinum: #e5e4e2;
+  --color-diamond: #b9f2ff;
+  --color-emerald: #50c878;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: 0 0% 4%;
+    --foreground: 0 0% 96%;
+    --card: 0 0% 7%;
+    --card-foreground: 0 0% 96%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 43 57% 54%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 43 57% 54%;
+    --accent-foreground: 0 0% 4%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+    --ring: 43 57% 54%;
+    --radius: 0.5rem;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  * {
+    @apply border-white/10;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-rich-black text-white antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    overscroll-behavior: none;
+  }
+  img, video {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+@layer utilities {
+  .text-gold-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #c9a84c 0%, #e8d5a3 50%, #8a6d2f 100%);
+  }
+
+  .bg-gold-gradient {
+    background: linear-gradient(135deg, #c9a84c 0%, #e8d5a3 50%, #8a6d2f 100%);
+  }
+
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+
+  .glassmorphism {
+    @apply bg-white/5 backdrop-blur-2xl border border-white/10 shadow-2xl;
+  }
+
+  .btn-gold {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold text-black shadow transition-all hover:opacity-90 hover:shadow-lg active:scale-[0.98];
+    background: linear-gradient(135deg, #c9a84c 0%, #e8d5a3 50%, #8a6d2f 100%);
+  }
+
+  .btn-outline-gold {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-gold px-4 py-2 text-sm font-semibold text-gold transition-all hover:bg-gold/10 active:scale-[0.98];
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }

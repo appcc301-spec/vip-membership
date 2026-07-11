@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: vip-platform
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: ARTIST_NAME
+        sync: false
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: TICKETMASTER_API_KEY
+        sync: false
+      - key: BANDSINTOWN_APP_ID
+        sync: false
+    disk:
+      name: vip-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
