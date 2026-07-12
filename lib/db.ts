@@ -3,9 +3,16 @@ import fs from "fs/promises";
 import path from "path";
 import { type Member, type AdminUser, type Artist, type ArtistStatus, type MembershipTier, type MembershipStatus, type CardTheme, type StatusHistoryEntry } from "./data";
 
-const DB_DIR = process.env.RENDER_DISK_PATH
-  ? process.env.RENDER_DISK_PATH
-  : path.join(process.cwd(), "data");
+function getDataDir(): string {
+  // Fly.io persistent volume is mounted here.
+  if (process.env.FLY_VOLUME_PATH) return process.env.FLY_VOLUME_PATH;
+  // Render paid tier persistent disk mount path.
+  if (process.env.RENDER_DISK_PATH) return process.env.RENDER_DISK_PATH;
+  // Local development.
+  return path.join(process.cwd(), "data");
+}
+
+const DB_DIR = getDataDir();
 const DB_PATH = path.join(DB_DIR, "vip-platform.db");
 
 // Per-process cache with mtime invalidation

@@ -3,9 +3,11 @@ import { readFile } from "fs/promises";
 import path from "path";
 
 function getUploadDir(): string {
-  const baseDir = process.env.RENDER_DISK_PATH
-    ? process.env.RENDER_DISK_PATH
-    : path.join(process.cwd(), "data");
+  const baseDir = process.env.FLY_VOLUME_PATH
+    ? process.env.FLY_VOLUME_PATH
+    : process.env.RENDER_DISK_PATH
+      ? process.env.RENDER_DISK_PATH
+      : path.join(process.cwd(), "data");
   return path.join(baseDir, "uploads");
 }
 

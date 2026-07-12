@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "node -e \"const fs=require('fs'); const path=require('path'); const src='node_modules/sql.js/dist/sql-wasm.wasm'; const dest='public/sql-wasm.wasm'; if(fs.existsSync(src)) { fs.mkdirSync('public', {recursive:true}); fs.copyFileSync(src, dest); console.log('Copied', src, '->', dest); } else { console.warn('sql-wasm.wasm not found at', src); }\""
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",

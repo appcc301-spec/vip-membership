@@ -7,10 +7,12 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif", "im
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 function getUploadDir(): string {
-  // Store uploads on the persistent disk (data/) so they survive redeploys on Render.
-  const baseDir = process.env.RENDER_DISK_PATH
-    ? process.env.RENDER_DISK_PATH
-    : path.join(process.cwd(), "data");
+  // Store uploads on the persistent volume so they survive redeploys/restarts.
+  const baseDir = process.env.FLY_VOLUME_PATH
+    ? process.env.FLY_VOLUME_PATH
+    : process.env.RENDER_DISK_PATH
+      ? process.env.RENDER_DISK_PATH
+      : path.join(process.cwd(), "data");
   return path.join(baseDir, "uploads");
 }
 

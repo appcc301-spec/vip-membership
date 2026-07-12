@@ -4,7 +4,7 @@ services:
     runtime: node
     region: oregon
     plan: free
-    buildCommand: npm install && cp node_modules/sql.js/dist/sql-wasm.wasm public/sql-wasm.wasm && npm run build
+    buildCommand: npm install && npm run build
     startCommand: npm run start
     envVars:
       - key: NODE_ENV
@@ -27,7 +27,8 @@ services:
         sync: false
       - key: BANDSINTOWN_APP_ID
         sync: false
-    disk:
-      name: vip-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
+      - key: RENDER_DISK_PATH
+        sync: false
+# NOTE: Render free web services do NOT support persistent disks. SQLite data and
+# uploaded files will be lost on redeploy/restart. For free persistence, deploy to
+# Fly.io instead (see fly.toml and Dockerfile in this repo).
