@@ -20,6 +20,10 @@
 # production
 /build
 
+# local sqlite database + uploaded files (persisted on Render disk)
+/data
+/public/sql-wasm.wasm
+
 # misc
 .DS_Store
 *.pem

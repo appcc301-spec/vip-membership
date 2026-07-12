@@ -70,9 +70,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const updated = await updateMember(id, { personal, membership, card, artistId });
     return NextResponse.json({ member: updated });
   } catch (error: any) {
-    if (error.message === "Unauthorized" || error.message === "Forbidden") {
-      return NextResponse.json({ error: error.message }, { status: 401 });
+    if (error.message === "Unauthorized") {
+      return NextResponse.json({ error: "Unauthorized — please log in again" }, { status: 401 });
     }
+    if (error.message === "Forbidden") {
+      console.warn("[members:patch] Forbidden activation attempt:", error.message);
+      return NextResponse.json({ error: "Forbidden — admin access required" }, { status: 403 });
+    }
+    console.error("[members:patch] Failed to update member:", error);
     return NextResponse.json({ error: error.message || "Failed to update member" }, { status: 500 });
   }
 }
@@ -89,8 +94,11 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     await removeMember(id);
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    if (error.message === "Unauthorized" || error.message === "Forbidden") {
-      return NextResponse.json({ error: error.message }, { status: 401 });
+    if (error.message === "Unauthorized") {
+      return NextResponse.json({ error: "Unauthorized — please log in again" }, { status: 401 });
+    }
+    if (error.message === "Forbidden") {
+      return NextResponse.json({ error: "Forbidden — admin access required" }, { status: 403 });
     }
     return NextResponse.json({ error: error.message || "Failed to delete member" }, { status: 500 });
   }

@@ -13,10 +13,19 @@ function tierLabel(tier: string): string {
 function createTransport() {
   return nodemailer.createTransport({
     service: "gmail",
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
     auth: {
       user: process.env.GMAIL_USER,
       pass: process.env.GMAIL_APP_PASSWORD,
     },
+    tls: {
+      rejectUnauthorized: true,
+    },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
   });
 }
 
@@ -175,15 +184,27 @@ export async function sendWelcomeEmail(
 
   try {
     const transporter = createTransport();
-    await transporter.sendMail({
+    console.log("[email] Verifying SMTP connection for:", process.env.GMAIL_USER);
+    const verifyResult = await transporter.verify();
+    console.log("[email] SMTP verify result:", verifyResult);
+
+    const info = await transporter.sendMail({
       from: `"${artistName} VIP Membership" <${process.env.GMAIL_USER}>`,
       to: member.personal.email,
       subject,
       html,
     });
+    console.log("[email] Welcome email sent:", info.messageId, info.response);
     return { success: true };
   } catch (err: any) {
-    console.error("[email] Failed to send welcome email:", err);
-    return { success: false, error: err?.message || "Unknown error" };
+    console.error("[email] Failed to send welcome email to:", member.personal.email);
+    console.error("[email] Error code:", err?.code);
+    console.error("[email] Error command:", err?.command);
+    console.error("[email] Error response:", err?.response);
+    console.error("[email] Full error:", err);
+    return {
+      success: false,
+      error: err?.response || err?.message || "Unknown error",
+    };
   }
 }

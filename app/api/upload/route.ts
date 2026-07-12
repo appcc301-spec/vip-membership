@@ -6,6 +6,14 @@ import path from "path";
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml"];
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
+function getUploadDir(): string {
+  // Store uploads on the persistent disk (data/) so they survive redeploys on Render.
+  const baseDir = process.env.RENDER_DISK_PATH
+    ? process.env.RENDER_DISK_PATH
+    : path.join(process.cwd(), "data");
+  return path.join(baseDir, "uploads");
+}
+
 export async function POST(request: NextRequest) {
   try {
     await requireAuth("admin");
@@ -26,16 +34,19 @@ export async function POST(request: NextRequest) {
 
     const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
     const safeName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const uploadDir = path.join(process.cwd(), "public", "uploads");
+    const uploadDir = getUploadDir();
     await mkdir(uploadDir, { recursive: true });
     await writeFile(path.join(uploadDir, safeName), buffer);
 
-    const url = `/uploads/${safeName}`;
+    // Serve through the API so files work in production regardless of static/public constraints.
+    const url = `/api/uploads/${safeName}`;
+    console.log("[upload] Saved file to:", path.join(uploadDir, safeName), "URL:", url);
     return NextResponse.json({ url }, { status: 201 });
   } catch (error: any) {
     if (error.message === "Unauthorized" || error.message === "Forbidden") {
       return NextResponse.json({ error: error.message }, { status: 401 });
     }
+    console.error("[upload] Upload failed:", error);
     return NextResponse.json({ error: error.message || "Upload failed" }, { status: 500 });
   }
 }

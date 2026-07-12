@@ -11,6 +11,7 @@ interface HeroProps {
 }
 
 const FALLBACK_BANNER = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=2070&auto=format&fit=crop";
+const FALLBACK_LOGO = "https://ui-avatars.com/api/?name=VIP&background=c9a84c&color=000&size=128&font-size=0.5&bold=true";
 
 export function Hero({ artistName = "Robert Plant", bannerUrl, logoUrl }: HeroProps) {
   return (
@@ -27,16 +28,17 @@ export function Hero({ artistName = "Robert Plant", bannerUrl, logoUrl }: HeroPr
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
         >
-          {logoUrl && (
-            <motion.img
-              src={logoUrl}
-              alt={artistName}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.6 }}
-              className="w-24 h-24 rounded-full object-cover border-2 border-gold/40 mx-auto mb-6 shadow-[0_0_40px_rgba(201,168,76,0.3)]"
-            />
-          )}
+          <motion.img
+            src={logoUrl || FALLBACK_LOGO}
+            alt={artistName}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.6 }}
+            className="w-24 h-24 rounded-full object-cover border-2 border-gold/40 mx-auto mb-6 shadow-[0_0_40px_rgba(201,168,76,0.3)]"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = FALLBACK_LOGO;
+            }}
+          />
           <p className="text-gold uppercase tracking-[0.3em] text-sm mb-6">
             Invitation Only
           </p>

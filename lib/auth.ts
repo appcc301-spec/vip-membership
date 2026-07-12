@@ -5,6 +5,14 @@ import bcrypt from "bcryptjs";
 
 const secretKey = process.env.NEXTAUTH_SECRET || "fallback-secret-do-not-use-in-production";
 const encodedKey = new TextEncoder().encode(secretKey);
+const isProduction = process.env.NODE_ENV === "production";
+
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  path: "/",
+  secure: isProduction,
+};
 
 export type SessionUser = {
   id: string;
@@ -51,7 +59,8 @@ export async function createAdminSession(email: string, password: string) {
   const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const token = await encrypt({ ...user, expires });
   const cookieStore = await cookies();
-  cookieStore.set("session", token, { expires, httpOnly: true, sameSite: "lax", path: "/" });
+  cookieStore.set("session", token, { ...cookieOptions, expires });
+  console.log("[auth] Admin session created for:", user.email, "secure:", cookieOptions.secure);
   return user;
 }
 
@@ -60,28 +69,39 @@ export async function createMemberSession(id: string, email: string, name: strin
   const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const token = await encrypt({ ...user, expires });
   const cookieStore = await cookies();
-  cookieStore.set("session", token, { expires, httpOnly: true, sameSite: "lax", path: "/" });
+  cookieStore.set("session", token, { ...cookieOptions, expires });
   return user;
 }
 
 export async function getSession() {
   const cookieStore = await cookies();
   const token = cookieStore.get("session")?.value;
-  return await decrypt(token);
+  if (!token) {
+    console.log("[auth] No session cookie found");
+    return null;
+  }
+  const session = await decrypt(token);
+  if (!session) {
+    console.warn("[auth] Session cookie failed to decrypt");
+  }
+  return session;
 }
 
 export async function clearSession() {
   const cookieStore = await cookies();
-  cookieStore.set("session", "", { expires: new Date(0), httpOnly: true, sameSite: "lax", path: "/" });
+  cookieStore.set("session", "", { ...cookieOptions, expires: new Date(0) });
 }
 
 export async function requireAuth(role: "admin" | "member" | "any" = "any") {
   const session = await getSession();
   if (!session) {
+    console.warn("[auth] requireAuth failed: no session");
     throw new Error("Unauthorized");
   }
   if (role !== "any" && session.role !== role) {
+    console.warn("[auth] requireAuth failed: role mismatch. Required:", role, "Got:", session.role, "Email:", session.email);
     throw new Error("Forbidden");
   }
+  console.log("[auth] requireAuth success. Role:", session.role, "Email:", session.email);
   return session;
 }

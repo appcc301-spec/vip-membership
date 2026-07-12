@@ -86,8 +86,33 @@ export async function POST(request: NextRequest) {
 
     await addMember(member);
 
-    const emailResult = await sendWelcomeEmail(member, tempPassword);
-    console.log("[members] Welcome email result:", emailResult);
+    // Trigger welcome email in the background so member creation returns fast.
+    // On Render (persistent Node) the process keeps running and completes the send.
+    const emailPromise = sendWelcomeEmail(member, tempPassword).then((result) => {
+      if (result.success) {
+        console.log("[members] Welcome email sent successfully to:", member.personal.email);
+      } else {
+        console.error("[members] Welcome email failed:", result.error);
+      }
+      return result;
+    });
+
+    // Give the email a short window to complete synchronously for immediate feedback,
+    // but never block the response for more than 3 seconds.
+    const emailResult = await Promise.race([
+      emailPromise,
+      new Promise<{ success: false; error: string }>((resolve) =>
+        setTimeout(() => {
+          // Keep the original promise running in the background so the email still attempts to send.
+          emailPromise.then((result) => {
+            if (!result.success) {
+              console.error("[members] Background welcome email failed:", result.error);
+            }
+          });
+          resolve({ success: false, error: "Email send timed out — will retry in background" });
+        }, 3000)
+      ),
+    ]);
 
     return NextResponse.json(
       {
