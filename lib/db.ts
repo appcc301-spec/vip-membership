@@ -1,21 +1,25 @@
+import { createClient, type Client, type ResultSet } from "@libsql/client";
 import initSqlJs from "sql.js";
 import fs from "fs/promises";
 import path from "path";
 import { type Member, type AdminUser, type Artist, type ArtistStatus, type MembershipTier, type MembershipStatus, type CardTheme, type StatusHistoryEntry } from "./data";
 
+// ─── Configuration ────────────────────────────────────────────────────────────
+
 function getDataDir(): string {
-  // Fly.io persistent volume is mounted here.
   if (process.env.FLY_VOLUME_PATH) return process.env.FLY_VOLUME_PATH;
-  // Render paid tier persistent disk mount path.
   if (process.env.RENDER_DISK_PATH) return process.env.RENDER_DISK_PATH;
-  // Local development.
   return path.join(process.cwd(), "data");
 }
 
 const DB_DIR = getDataDir();
 const DB_PATH = path.join(DB_DIR, "vip-platform.db");
 
-// Per-process cache with mtime invalidation
+const TURSO_URL = process.env.TURSO_DATABASE_URL;
+const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
+
+// ─── Global state ─────────────────────────────────────────────────────────────
+
 declare global {
   // eslint-disable-next-line no-var
   var __vip_sql: import("sql.js").SqlJsStatic | undefined;
@@ -23,12 +27,14 @@ declare global {
   var __vip_db: import("sql.js").Database | undefined;
   // eslint-disable-next-line no-var
   var __vip_db_mtime: number;
+  // eslint-disable-next-line no-var
+  var __vip_turso: Client | undefined;
 }
+
+// ─── sql.js local fallback (used for local development) ───────────────────────
 
 async function getSql(): Promise<import("sql.js").SqlJsStatic> {
   if (globalThis.__vip_sql) return globalThis.__vip_sql;
-  // In production (Render), use the wasm file copied into /public at build time.
-  // In development, use node_modules directly.
   const wasmPath = process.env.NODE_ENV === "production"
     ? path.join(process.cwd(), "public", "sql-wasm.wasm")
     : path.join(process.cwd(), "node_modules", "sql.js", "dist", "sql-wasm.wasm");
@@ -94,7 +100,6 @@ function applySchema(db: import("sql.js").Database): void {
       updated_at TEXT NOT NULL
     );
   `); } catch {}
-  // Safe migrations — columns added only if missing
   try { db.run("ALTER TABLE members ADD COLUMN pending_expires_at TEXT"); } catch {}
   try { db.run("ALTER TABLE members ADD COLUMN dormant_at TEXT"); } catch {}
   try { db.run("ALTER TABLE members ADD COLUMN status_history TEXT"); } catch {}
@@ -104,20 +109,18 @@ function applySchema(db: import("sql.js").Database): void {
   try { db.run("ALTER TABLE artists ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0"); } catch {}
 }
 
-async function initDb(): Promise<import("sql.js").Database> {
+async function initLocalDb(): Promise<import("sql.js").Database> {
   const SQL = await getSql();
   let db: import("sql.js").Database;
   let needsPersist = false;
 
   await fs.mkdir(DB_DIR, { recursive: true });
 
-  // Try loading the existing DB file
   try {
     const fileBuffer = await fs.readFile(DB_PATH);
     if (fileBuffer.length === 0) throw new Error("Empty file");
     db = new SQL.Database(fileBuffer);
 
-    // Verify integrity
     const check = db.exec("PRAGMA integrity_check;");
     const result = check?.[0]?.values?.[0]?.[0];
     if (result !== "ok") {
@@ -128,12 +131,10 @@ async function initDb(): Promise<import("sql.js").Database> {
       needsPersist = true;
     }
   } catch {
-    // File missing or unreadable — start fresh
     db = new SQL.Database();
     needsPersist = true;
   }
 
-  // Check if migration columns exist before applying schema
   const hasMigrations = (() => {
     try {
       const cols = db.exec("PRAGMA table_info(artists)");
@@ -153,44 +154,31 @@ async function initDb(): Promise<import("sql.js").Database> {
     needsPersist = true;
   }
 
-  // Only persist if DB was new OR migrations were just applied for the first time
   if (!hasMigrations) needsPersist = true;
-  if (needsPersist) await persistDb(db);
+  if (needsPersist) await persistLocalDb(db);
 
   return db;
 }
 
-// Write db state to disk
-async function persistDb(db: import("sql.js").Database): Promise<void> {
-  try {
-    const data = db.export();
-    await fs.mkdir(DB_DIR, { recursive: true });
-    await fs.writeFile(DB_PATH, Buffer.from(data));
-  } catch (err) {
-    console.error("[db] FAILED to persist database to", DB_PATH, err);
-    throw err;
-  }
+async function persistLocalDb(db: import("sql.js").Database): Promise<void> {
+  const data = db.export();
+  await fs.mkdir(DB_DIR, { recursive: true });
+  await fs.writeFile(DB_PATH, Buffer.from(data));
 }
 
-/**
- * Returns the DB, reloading from disk if the file has been written since last load.
- * This ensures API route writes are visible to page renders across processes.
- */
-export async function getDb(): Promise<import("sql.js").Database> {
+async function getLocalDb(): Promise<import("sql.js").Database> {
   try {
     const stat = await fs.stat(DB_PATH);
     const mtime = stat.mtimeMs;
     if (globalThis.__vip_db && globalThis.__vip_db_mtime === mtime) {
       return globalThis.__vip_db;
     }
-    // File changed or first load — reload
-    globalThis.__vip_db = await initDb();
+    globalThis.__vip_db = await initLocalDb();
     const stat2 = await fs.stat(DB_PATH);
     globalThis.__vip_db_mtime = stat2.mtimeMs;
     return globalThis.__vip_db;
   } catch {
-    // File doesn't exist yet
-    globalThis.__vip_db = await initDb();
+    globalThis.__vip_db = await initLocalDb();
     try {
       const stat2 = await fs.stat(DB_PATH);
       globalThis.__vip_db_mtime = stat2.mtimeMs;
@@ -199,34 +187,85 @@ export async function getDb(): Promise<import("sql.js").Database> {
   }
 }
 
-export async function saveDb(db: import("sql.js").Database): Promise<void> {
-  await persistDb(db);
-  // Invalidate the mtime cache so next getDb() reloads from the new file
-  globalThis.__vip_db = db;
-  try {
-    const stat = await fs.stat(DB_PATH);
-    globalThis.__vip_db_mtime = stat.mtimeMs;
-  } catch {}
+// ─── Turso / libSQL client ──────────────────────────────────────────────────────
+
+function getTursoClient(): Client {
+  if (!globalThis.__vip_turso) {
+    if (!TURSO_URL) throw new Error("TURSO_DATABASE_URL is not set");
+    globalThis.__vip_turso = createClient({
+      url: TURSO_URL,
+      authToken: TURSO_TOKEN,
+    });
+  }
+  return globalThis.__vip_turso;
 }
 
-export async function seedAdmin(admin: AdminUser): Promise<void> {
-  const db = await getDb();
-  const existing = db.exec("SELECT id FROM admin WHERE id = ?", [admin.id]);
-  if (existing.length > 0 && existing[0].values.length > 0) return;
+function isTurso(): boolean {
+  return Boolean(TURSO_URL);
+}
 
-  db.run(
+// ─── Query helpers ────────────────────────────────────────────────────────────
+
+function resultSetToRecordArray(rs: ResultSet): Record<string, string | null>[] {
+  return rs.rows.map((row) => {
+    const record: Record<string, string | null> = {};
+    for (const col of rs.columns) {
+      const value = (row as Record<string, unknown>)[col];
+      record[col] = value === null || value === undefined ? null : String(value);
+    }
+    return record;
+  });
+}
+
+async function queryAll(sql: string, args: (string | number | null)[] = []): Promise<Record<string, string | null>[]> {
+  if (isTurso()) {
+    const rs = await getTursoClient().execute({ sql, args });
+    return resultSetToRecordArray(rs);
+  }
+  const db = await getLocalDb();
+  const result = db.exec(sql, args);
+  if (result.length === 0) return [];
+  const columns = result[0].columns;
+  return result[0].values.map((row) => {
+    const record: Record<string, string | null> = {};
+    columns.forEach((col, i) => {
+      const value = row[i];
+      record[col] = value === null || value === undefined ? null : String(value);
+    });
+    return record;
+  });
+}
+
+async function querySingle(sql: string, args: (string | number | null)[] = []): Promise<Record<string, string | null> | undefined> {
+  const rows = await queryAll(sql, args);
+  return rows[0];
+}
+
+async function run(sql: string, args: (string | number | null)[] = []): Promise<void> {
+  if (isTurso()) {
+    await getTursoClient().execute({ sql, args });
+    return;
+  }
+  const db = await getLocalDb();
+  db.run(sql, args);
+  await persistLocalDb(db);
+}
+
+// ─── Public API (kept identical to the previous sql.js version) ─────────────────
+
+export async function seedAdmin(admin: AdminUser): Promise<void> {
+  const existing = await querySingle("SELECT id FROM admin WHERE id = ?", [admin.id]);
+  if (existing) return;
+  await run(
     "INSERT INTO admin (id, email, password_hash) VALUES (?, ?, ?)",
     [admin.id, admin.email, admin.passwordHash]
   );
-  await saveDb(db);
 }
 
 export async function getAdminByEmail(email: string): Promise<AdminUser | undefined> {
-  const db = await getDb();
-  const result = db.exec("SELECT id, email, password_hash FROM admin WHERE email = ?", [email]);
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const [id, emailValue, passwordHash] = result[0].values[0] as string[];
-  return { id, email: emailValue, passwordHash, role: "admin" };
+  const row = await querySingle("SELECT id, email, password_hash FROM admin WHERE email = ?", [email]);
+  if (!row) return undefined;
+  return { id: row.id!, email: row.email!, passwordHash: row.password_hash!, role: "admin" };
 }
 
 export function rowToArtist(row: Record<string, string | null>): Artist {
@@ -240,41 +279,28 @@ export function rowToArtist(row: Record<string, string | null>): Artist {
     contactEmail: row.contact_email || undefined,
     primaryColor: row.primary_color || undefined,
     status: (row.status as ArtistStatus) || "active",
-    isActive: row.is_active === "1" || (row.is_active as unknown) === 1,
-    isArchived: row.is_archived === "1" || (row.is_archived as unknown) === 1,
+    isActive: row.is_active === "1" || (row.is_active as unknown) === 1 || row.is_active === "true",
+    isArchived: row.is_archived === "1" || (row.is_archived as unknown) === 1 || row.is_archived === "true",
     createdAt: row.created_at!,
     updatedAt: row.updated_at!,
   };
 }
 
 export async function getArtistRows(): Promise<Artist[]> {
-  const db = await getDb();
-  const result = db.exec("SELECT * FROM artists ORDER BY name ASC");
-  if (result.length === 0) return [];
-  const columns = result[0].columns;
-  return result[0].values.map((row) => {
-    const record: Record<string, string | null> = {};
-    columns.forEach((col, i) => { record[col] = row[i] as string | null; });
-    return rowToArtist(record);
-  });
+  const rows = await queryAll("SELECT * FROM artists ORDER BY name ASC");
+  return rows.map(rowToArtist);
 }
 
 export async function getArtistById(id: string): Promise<Artist | undefined> {
-  const db = await getDb();
-  const result = db.exec("SELECT * FROM artists WHERE id = ?", [id]);
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const columns = result[0].columns;
-  const record: Record<string, string | null> = {};
-  columns.forEach((col, i) => { record[col] = result[0].values[0][i] as string | null; });
-  return rowToArtist(record);
+  const row = await querySingle("SELECT * FROM artists WHERE id = ?", [id]);
+  if (!row) return undefined;
+  return rowToArtist(row);
 }
 
 export async function createArtistRecord(artist: Artist): Promise<void> {
-  const db = await getDb();
-  // If this is the first artist, make it active automatically
-  const count = db.exec("SELECT COUNT(*) FROM artists");
-  const isFirst = (count[0]?.values[0][0] as number) === 0;
-  db.run(
+  const count = await querySingle("SELECT COUNT(*) as count FROM artists");
+  const isFirst = (count?.count as string) === "0";
+  await run(
     `INSERT OR IGNORE INTO artists (id, name, slug, logo_url, banner_url, description, contact_email, primary_color, status, is_active, is_archived, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [artist.id, artist.name, artist.slug, artist.logoUrl || null, artist.bannerUrl || null,
@@ -282,60 +308,46 @@ export async function createArtistRecord(artist: Artist): Promise<void> {
      artist.status, isFirst ? 1 : (artist.isActive ? 1 : 0), artist.isArchived ? 1 : 0,
      artist.createdAt, artist.updatedAt]
   );
-  await saveDb(db);
 }
 
 export async function updateArtistRecord(id: string, updates: Partial<Artist>): Promise<Artist | undefined> {
   const existing = await getArtistById(id);
   if (!existing) return undefined;
   const artist: Artist = { ...existing, ...updates, updatedAt: new Date().toISOString() };
-  const db = await getDb();
-  db.run(
+  await run(
     `UPDATE artists SET name=?, slug=?, logo_url=?, banner_url=?, description=?, contact_email=?, primary_color=?, status=?, is_active=?, is_archived=?, updated_at=? WHERE id=?`,
     [artist.name, artist.slug, artist.logoUrl || null, artist.bannerUrl || null,
      artist.description || null, artist.contactEmail || null, artist.primaryColor || null,
      artist.status, artist.isActive ? 1 : 0, artist.isArchived ? 1 : 0,
      artist.updatedAt, artist.id]
   );
-  await saveDb(db);
   return artist;
 }
 
 export async function setArtistActiveRecord(id: string): Promise<Artist | undefined> {
   const existing = await getArtistById(id);
   if (!existing) return undefined;
-  const db = await getDb();
   const now = new Date().toISOString();
-  // Clear active from all artists first
-  db.run("UPDATE artists SET is_active = 0, updated_at = ? WHERE is_active = 1", [now]);
-  // Set this one as active and ensure not archived
-  db.run("UPDATE artists SET is_active = 1, is_archived = 0, status = 'active', updated_at = ? WHERE id = ?", [now, id]);
-  await saveDb(db);
+  await run("UPDATE artists SET is_active = 0, updated_at = ? WHERE is_active = 1", [now]);
+  await run("UPDATE artists SET is_active = 1, is_archived = 0, status = 'active', updated_at = ? WHERE id = ?", [now, id]);
   return getArtistById(id);
 }
 
 export async function getActiveArtistRecord(): Promise<Artist | undefined> {
-  const db = await getDb();
-  const result = db.exec("SELECT * FROM artists WHERE is_active = 1 LIMIT 1");
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const columns = result[0].columns;
-  const record: Record<string, string | null> = {};
-  columns.forEach((col, i) => { record[col] = result[0].values[0][i] as string | null; });
-  return rowToArtist(record);
+  const row = await querySingle("SELECT * FROM artists WHERE is_active = 1 LIMIT 1");
+  if (!row) return undefined;
+  return rowToArtist(row);
 }
 
 export async function deleteArtistRecord(id: string): Promise<{ ok: boolean; memberCount: number; eventCount: number }> {
-  const db = await getDb();
-  // Count related records
-  const mRes = db.exec("SELECT COUNT(*) FROM members WHERE artist_id = ?", [id]);
-  const memberCount = (mRes[0]?.values[0][0] as number) ?? 0;
+  const mRes = await querySingle("SELECT COUNT(*) as count FROM members WHERE artist_id = ?", [id]);
+  const memberCount = parseInt(mRes?.count || "0", 10);
   let eventCount = 0;
   try {
-    const eRes = db.exec("SELECT COUNT(*) FROM events WHERE artist_id = ?", [id]);
-    eventCount = (eRes[0]?.values[0][0] as number) ?? 0;
+    const eRes = await querySingle("SELECT COUNT(*) as count FROM events WHERE artist_id = ?", [id]);
+    eventCount = parseInt(eRes?.count || "0", 10);
   } catch {}
-  db.run("DELETE FROM artists WHERE id = ?", [id]);
-  await saveDb(db);
+  await run("DELETE FROM artists WHERE id = ?", [id]);
   return { ok: true, memberCount, eventCount };
 }
 
@@ -390,8 +402,7 @@ export function rowToMember(row: Record<string, string | null>): Member {
 }
 
 export async function createMemberRecord(member: Member): Promise<void> {
-  const db = await getDb();
-  db.run(
+  await run(
     `
     INSERT OR IGNORE INTO members (
       id, artist_id, first_name, last_name, email, phone, country, address, date_of_birth, profile_photo,
@@ -436,51 +447,28 @@ export async function createMemberRecord(member: Member): Promise<void> {
       member.updatedAt,
     ]
   );
-  await saveDb(db);
 }
 
 export async function getMemberRows(): Promise<Member[]> {
-  const db = await getDb();
-  const result = db.exec("SELECT * FROM members ORDER BY created_at DESC");
-  if (result.length === 0) return [];
-  const columns = result[0].columns;
-  return result[0].values.map((row) => {
-    const record: Record<string, string | null> = {};
-    columns.forEach((col, i) => {
-      record[col] = row[i] as string | null;
-    });
-    return rowToMember(record);
-  });
+  const rows = await queryAll("SELECT * FROM members ORDER BY created_at DESC");
+  return rows.map(rowToMember);
 }
 
 export async function getMemberById(id: string): Promise<Member | undefined> {
-  const db = await getDb();
-  const result = db.exec("SELECT * FROM members WHERE id = ?", [id]);
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const columns = result[0].columns;
-  const record: Record<string, string | null> = {};
-  columns.forEach((col, i) => {
-    record[col] = result[0].values[0][i] as string | null;
-  });
-  return rowToMember(record);
+  const row = await querySingle("SELECT * FROM members WHERE id = ?", [id]);
+  if (!row) return undefined;
+  return rowToMember(row);
 }
 
 export async function getMemberByEmail(email: string): Promise<Member | undefined> {
-  const db = await getDb();
-  const result = db.exec("SELECT * FROM members WHERE email = ?", [email]);
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const columns = result[0].columns;
-  const record: Record<string, string | null> = {};
-  columns.forEach((col, i) => {
-    record[col] = result[0].values[0][i] as string | null;
-  });
-  return rowToMember(record);
+  const row = await querySingle("SELECT * FROM members WHERE email = ?", [email]);
+  if (!row) return undefined;
+  return rowToMember(row);
 }
 
 export async function memberExistsByEmail(email: string): Promise<boolean> {
-  const db = await getDb();
-  const result = db.exec("SELECT 1 FROM members WHERE email = ?", [email]);
-  return result.length > 0 && result[0].values.length > 0;
+  const row = await querySingle("SELECT 1 as ok FROM members WHERE email = ?", [email]);
+  return Boolean(row);
 }
 
 export async function updateMemberRecord(id: string, updates: Partial<Member>): Promise<Member | undefined> {
@@ -493,8 +481,7 @@ export async function updateMemberRecord(id: string, updates: Partial<Member>): 
     credentials: { ...existing.credentials, ...(updates.credentials ?? {}) },
     updatedAt: new Date().toISOString(),
   };
-  const db = await getDb();
-  db.run(
+  await run(
     `
     UPDATE members SET
       first_name = ?, last_name = ?, email = ?, phone = ?, country = ?, address = ?, date_of_birth = ?, profile_photo = ?,
@@ -538,17 +525,26 @@ export async function updateMemberRecord(id: string, updates: Partial<Member>): 
       member.id,
     ]
   );
-  await saveDb(db);
   return member;
 }
 
 export async function deleteMemberRecord(id: string): Promise<boolean> {
-  const db = await getDb();
-  const before = db.exec("SELECT COUNT(*) as count FROM members");
-  db.run("DELETE FROM members WHERE id = ?", [id]);
-  const after = db.exec("SELECT COUNT(*) as count FROM members");
-  await saveDb(db);
-  const beforeCount = (before[0]?.values[0][0] as number) || 0;
-  const afterCount = (after[0]?.values[0][0] as number) || 0;
+  const before = await querySingle("SELECT COUNT(*) as count FROM members");
+  await run("DELETE FROM members WHERE id = ?", [id]);
+  const after = await querySingle("SELECT COUNT(*) as count FROM members");
+  const beforeCount = parseInt(before?.count || "0", 10);
+  const afterCount = parseInt(after?.count || "0", 10);
   return afterCount < beforeCount;
+}
+
+export async function saveDb(_db?: import("sql.js").Database): Promise<void> {
+  if (!isTurso()) {
+    const db = _db || globalThis.__vip_db;
+    if (db) await persistLocalDb(db);
+  }
+}
+
+export async function getDb(): Promise<import("sql.js").Database | Client> {
+  if (isTurso()) return getTursoClient();
+  return getLocalDb();
 }

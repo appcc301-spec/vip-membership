@@ -19,9 +19,13 @@ services:
         sync: false
       - key: ARTIST_NAME
         sync: false
-      - key: GMAIL_USER
+      - key: TURSO_DATABASE_URL
         sync: false
-      - key: GMAIL_APP_PASSWORD
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
         sync: false
       - key: TICKETMASTER_API_KEY
         sync: false
@@ -29,6 +33,7 @@ services:
         sync: false
       - key: RENDER_DISK_PATH
         sync: false
-# NOTE: Render free web services do NOT support persistent disks. SQLite data and
-# uploaded files will be lost on redeploy/restart. For free persistence, deploy to
-# Fly.io instead (see fly.toml and Dockerfile in this repo).
+# NOTE: Render free web services do NOT support persistent disks.
+# Data is persisted in Turso (cloud SQLite) and email is sent via Resend (HTTPS API).
+# Set TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, RESEND_API_KEY, and RESEND_FROM_EMAIL
+# in your Render dashboard under Environment variables.

@@ -1,41 +1,29 @@
 import "server-only";
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 import { type Member } from "./data";
 import { getActiveArtistRecord } from "./db";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 const ARTIST_NAME = process.env.ARTIST_NAME || "VIP";
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
 
 function tierLabel(tier: string): string {
   return tier.charAt(0).toUpperCase() + tier.slice(1) + " VIP";
 }
 
-function createTransport() {
-  return nodemailer.createTransport({
-    service: "gmail",
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    auth: {
-      user: process.env.GMAIL_USER,
-      pass: process.env.GMAIL_APP_PASSWORD,
-    },
-    tls: {
-      rejectUnauthorized: true,
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  });
+function getResend(): Resend {
+  if (!RESEND_API_KEY) throw new Error("RESEND_API_KEY is not configured");
+  return new Resend(RESEND_API_KEY);
 }
 
 export async function sendWelcomeEmail(
   member: Member,
   temporaryPassword: string
 ): Promise<{ success: boolean; error?: string }> {
-  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
-    console.warn("[email] GMAIL_USER or GMAIL_APP_PASSWORD not set — skipping welcome email");
-    return { success: false, error: "Gmail credentials not configured" };
+  if (!RESEND_API_KEY) {
+    console.warn("[email] RESEND_API_KEY not set — skipping welcome email");
+    return { success: false, error: "Resend API key not configured" };
   }
 
   let artistName = "";
@@ -183,28 +171,29 @@ export async function sendWelcomeEmail(
   `.trim();
 
   try {
-    const transporter = createTransport();
-    console.log("[email] Verifying SMTP connection for:", process.env.GMAIL_USER);
-    const verifyResult = await transporter.verify();
-    console.log("[email] SMTP verify result:", verifyResult);
-
-    const info = await transporter.sendMail({
-      from: `"${artistName} VIP Membership" <${process.env.GMAIL_USER}>`,
-      to: member.personal.email,
+    const resend = getResend();
+    const fromName = `${artistName} VIP Membership`;
+    const result = await resend.emails.send({
+      from: `${fromName} <${RESEND_FROM_EMAIL}>`,
+      to: [member.personal.email],
       subject,
       html,
     });
-    console.log("[email] Welcome email sent:", info.messageId, info.response);
+
+    if (result.error) {
+      console.error("[email] Resend returned error:", result.error);
+      return { success: false, error: result.error.message || "Resend error" };
+    }
+
+    console.log("[email] Welcome email sent via Resend:", result.data?.id);
     return { success: true };
   } catch (err: any) {
     console.error("[email] Failed to send welcome email to:", member.personal.email);
-    console.error("[email] Error code:", err?.code);
-    console.error("[email] Error command:", err?.command);
-    console.error("[email] Error response:", err?.response);
+    console.error("[email] Error message:", err?.message);
     console.error("[email] Full error:", err);
     return {
       success: false,
-      error: err?.response || err?.message || "Unknown error",
+      error: err?.message || "Unknown error",
     };
   }
 }
