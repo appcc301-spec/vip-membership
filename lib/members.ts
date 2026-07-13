@@ -11,8 +11,6 @@ import {
   deleteMemberRecord,
   getArtistRows,
   getArtistById as dbGetArtistById,
-  getArtistBySlugRecord,
-  getActiveArtistsRecords,
   createArtistRecord,
   updateArtistRecord,
   deleteArtistRecord,
@@ -71,14 +69,6 @@ export async function getArtists(): Promise<Artist[]> {
 
 export async function getArtistById(id: string): Promise<Artist | undefined> {
   return dbGetArtistById(id);
-}
-
-export async function getArtistBySlug(slug: string): Promise<Artist | undefined> {
-  return getArtistBySlugRecord(slug);
-}
-
-export async function getActiveArtists(): Promise<Artist[]> {
-  return getActiveArtistsRecords();
 }
 
 export async function addArtist(artist: Artist): Promise<void> {

@@ -207,26 +207,22 @@ export async function getEventsByArtist(artistId: string): Promise<PlatformEvent
   return rows.map(rowToEvent);
 }
 
-export async function getAllEvents(artistId?: string): Promise<PlatformEvent[]> {
+export async function getAllEvents(): Promise<PlatformEvent[]> {
   await initEventsTables();
-  const sql = artistId
-    ? "SELECT * FROM events WHERE artist_id = ? ORDER BY date ASC"
-    : "SELECT * FROM events ORDER BY date ASC";
-  const args = artistId ? [artistId] : [];
-  const rows = await queryAll(sql, args);
+  const rows = await queryAll("SELECT * FROM events ORDER BY date ASC");
   return rows.map(rowToEvent);
 }
 
-export async function getVisibleEvents(artistId?: string): Promise<PlatformEvent[]> {
-  const events = await getAllEvents(artistId);
+export async function getVisibleEvents(): Promise<PlatformEvent[]> {
+  const events = await getAllEvents();
   const now = new Date().toISOString().split("T")[0];
   return events.filter((e) => e.visible && e.date >= now);
 }
 
-export async function getPublicEvents(limit?: number, artistId?: string): Promise<PlatformEvent[]> {
+export async function getPublicEvents(limit?: number): Promise<PlatformEvent[]> {
   await seedEventsIfEmpty();
-  let events = await getVisibleEvents(artistId);
-  if (events.length === 0 && !artistId && process.env.TICKETMASTER_API_KEY) {
+  let events = await getVisibleEvents();
+  if (events.length === 0 && process.env.TICKETMASTER_API_KEY) {
     try {
       const { syncEventsFromBandsintown } = await import("./sync");
       await syncEventsFromBandsintown();
@@ -240,9 +236,9 @@ export async function getPublicEvents(limit?: number, artistId?: string): Promis
   return limit ? sorted.slice(0, limit) : sorted;
 }
 
-export async function getMemberEvents(artistId?: string): Promise<PlatformEvent[]> {
+export async function getMemberEvents(): Promise<PlatformEvent[]> {
   await seedEventsIfEmpty();
-  const events = await getVisibleEvents(artistId);
+  const events = await getVisibleEvents();
   return events.sort((a, b) => a.date.localeCompare(b.date));
 }
 

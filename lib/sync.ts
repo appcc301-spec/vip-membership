@@ -3,7 +3,6 @@ import { v4 as uuid } from "uuid";
 import { fetchTicketmasterEvents } from "./ticketmaster";
 import { fetchBandsintownEvents } from "./bandsintown";
 import { getAllEvents, upsertEvents, recordSyncStatus, deleteImportedEvents } from "./events-data";
-import { getActiveArtists } from "./members";
 import { type PlatformEvent, type SyncStatus } from "./data";
 
 export interface SyncResult {
@@ -17,72 +16,43 @@ export interface SyncResult {
 }
 
 /**
- * Sync upcoming events for all active artists into the database.
- * Uses Ticketmaster keyword search for each active artist when available.
- * Falls back to Bandsintown for the primary artist if no Ticketmaster key is set.
+ * Sync upcoming Robert Plant events into the database.
+ * Priority: Ticketmaster (free public API) → Bandsintown (requires artist key).
+ * If neither key is configured, records a disabled status and returns 0 events.
  */
 export async function syncEventsFromBandsintown(): Promise<SyncResult> {
   const hasTm = !!process.env.TICKETMASTER_API_KEY;
   const hasBit = !!process.env.BANDSINTOWN_APP_ID;
 
-  const activeArtists = await getActiveArtists();
-  const primaryArtist = activeArtists[0];
-
-  // No API keys configured — record disabled state
-  if (!hasTm && !hasBit) {
-    const tmFetched = await fetchTicketmasterEvents();
-    const result = await recordError(
-      tmFetched.endpoint,
-      "Ticketmaster",
-      undefined,
-      tmFetched.errorMessage!,
-      true
-    );
-    return { ...result, source: "ticketmaster" };
-  }
-
-  // Try Ticketmaster for every active artist
+  // Try Ticketmaster first (no artist account needed)
   if (hasTm) {
-    const allEvents: PlatformEvent[] = [];
-    let lastEndpoint = "";
-    let lastApiStatus: number | undefined;
-    let anyError = "";
-
-    for (const artist of activeArtists) {
-      const fetched = await fetchTicketmasterEvents(artist.name);
-      lastEndpoint = fetched.endpoint;
-      lastApiStatus = fetched.apiStatus;
-      if (fetched.errorMessage) {
-        anyError = fetched.errorMessage;
-        continue;
-      }
-      for (const event of fetched.events) {
-        allEvents.push({ ...event, artistId: artist.id });
-      }
-    }
-
-    if (allEvents.length > 0) {
-      return persistAndRecord(allEvents, lastEndpoint, "ticketmaster", lastApiStatus);
-    }
-
-    if (activeArtists.length > 0) {
-      return recordError(lastEndpoint, "Ticketmaster", lastApiStatus, anyError || "No events found", false);
+    const fetched = await fetchTicketmasterEvents();
+    if (!fetched.errorMessage) {
+      return persistAndRecord(fetched.events, fetched.endpoint, "ticketmaster", fetched.apiStatus);
     }
   }
 
-  // Fall back to Bandsintown for the primary artist (requires artist account key)
-  if (hasBit && primaryArtist) {
+  // Fall back to Bandsintown (requires artist account key)
+  if (hasBit) {
     const fetched = await fetchBandsintownEvents();
     if (!fetched.errorMessage) {
-      const eventsWithArtist = fetched.events.map((e) => ({ ...e, artistId: primaryArtist.id }));
-      return persistAndRecord(eventsWithArtist, fetched.endpoint, "bandsintown_api", fetched.apiStatus);
+      return persistAndRecord(fetched.events, fetched.endpoint, "bandsintown_api", fetched.apiStatus);
     }
-    return recordError(fetched.endpoint, "Bandsintown", fetched.apiStatus, fetched.errorMessage!, false);
+    // Both configured but both failed — record the Bandsintown error
+    const result = await recordError(fetched.endpoint, "Bandsintown", fetched.apiStatus, fetched.errorMessage!, false);
+    return result;
   }
 
-  // No active artists and no usable APIs
+  // No API keys configured — record disabled state
   const tmFetched = await fetchTicketmasterEvents();
-  return recordError(tmFetched.endpoint, "Ticketmaster", tmFetched.apiStatus, tmFetched.errorMessage!, false);
+  const result = await recordError(
+    tmFetched.endpoint,
+    "Ticketmaster",
+    undefined,
+    tmFetched.errorMessage!,
+    true
+  );
+  return { ...result, source: "ticketmaster" };
 }
 
 async function persistAndRecord(
