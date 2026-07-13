@@ -204,6 +204,43 @@ function isTurso(): boolean {
   return Boolean(TURSO_URL);
 }
 
+let tursoSchemaEnsured = false;
+let tursoSchemaPromise: Promise<void> | null = null;
+
+async function ensureTursoSchema(): Promise<void> {
+  if (tursoSchemaEnsured || !isTurso()) return;
+  if (tursoSchemaPromise) {
+    await tursoSchemaPromise;
+    return;
+  }
+  tursoSchemaPromise = (async () => {
+    try {
+      const client = getTursoClient();
+      const statements = [
+        `CREATE TABLE IF NOT EXISTS admin (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL);`,
+        `CREATE TABLE IF NOT EXISTS members (id TEXT PRIMARY KEY, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, phone TEXT, country TEXT, address TEXT, date_of_birth TEXT, profile_photo TEXT, tier TEXT NOT NULL, membership_number TEXT NOT NULL UNIQUE, start_date TEXT NOT NULL, expiration_date TEXT NOT NULL, status TEXT NOT NULL, notes TEXT, card_id TEXT NOT NULL, card_theme TEXT NOT NULL, card_issue_date TEXT NOT NULL, card_expiration_date TEXT NOT NULL, qr_code_url TEXT NOT NULL, card_status TEXT NOT NULL, username TEXT NOT NULL, password_hash TEXT NOT NULL, temporary_password TEXT NOT NULL, pending_expires_at TEXT, dormant_at TEXT, status_history TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+        `CREATE TABLE IF NOT EXISTS artists (id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, logo_url TEXT, banner_url TEXT, description TEXT, contact_email TEXT, primary_color TEXT, status TEXT NOT NULL DEFAULT 'active', is_active INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+        `ALTER TABLE members ADD COLUMN pending_expires_at TEXT;`,
+        `ALTER TABLE members ADD COLUMN dormant_at TEXT;`,
+        `ALTER TABLE members ADD COLUMN status_history TEXT;`,
+        `ALTER TABLE members ADD COLUMN artist_id TEXT;`,
+        `ALTER TABLE members ADD COLUMN password_updated_at TEXT;`,
+        `ALTER TABLE artists ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0;`,
+        `ALTER TABLE artists ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0;`,
+      ];
+      for (const sql of statements) {
+        try { await client.execute({ sql, args: [] }); } catch {}
+      }
+      tursoSchemaEnsured = true;
+    } catch (err) {
+      console.error("[db] Failed to ensure Turso schema:", err);
+    } finally {
+      tursoSchemaPromise = null;
+    }
+  })();
+  await tursoSchemaPromise;
+}
+
 // ─── Query helpers ────────────────────────────────────────────────────────────
 
 function resultSetToRecordArray(rs: ResultSet): Record<string, string | null>[] {
@@ -217,8 +254,9 @@ function resultSetToRecordArray(rs: ResultSet): Record<string, string | null>[] 
   });
 }
 
-async function queryAll(sql: string, args: (string | number | null)[] = []): Promise<Record<string, string | null>[]> {
+export async function queryAll(sql: string, args: (string | number | null)[] = []): Promise<Record<string, string | null>[]> {
   if (isTurso()) {
+    await ensureTursoSchema();
     const rs = await getTursoClient().execute({ sql, args });
     return resultSetToRecordArray(rs);
   }
@@ -236,13 +274,14 @@ async function queryAll(sql: string, args: (string | number | null)[] = []): Pro
   });
 }
 
-async function querySingle(sql: string, args: (string | number | null)[] = []): Promise<Record<string, string | null> | undefined> {
+export async function querySingle(sql: string, args: (string | number | null)[] = []): Promise<Record<string, string | null> | undefined> {
   const rows = await queryAll(sql, args);
   return rows[0];
 }
 
-async function run(sql: string, args: (string | number | null)[] = []): Promise<void> {
+export async function run(sql: string, args: (string | number | null)[] = []): Promise<void> {
   if (isTurso()) {
+    await ensureTursoSchema();
     await getTursoClient().execute({ sql, args });
     return;
   }

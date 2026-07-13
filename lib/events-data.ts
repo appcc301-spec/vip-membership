@@ -1,7 +1,6 @@
 import "server-only";
-import { getDb, saveDb } from "./db";
+import { queryAll, querySingle, run } from "./db";
 import { type PlatformEvent, type EventRsvp, type SyncStatus } from "./data";
-
 
 const DEMO_EVENTS: PlatformEvent[] = [
   {
@@ -90,9 +89,21 @@ const DEMO_EVENTS: PlatformEvent[] = [
   },
 ];
 
-export async function initEventsTables(existingDb?: import("sql.js").Database): Promise<import("sql.js").Database> {
-  const db = existingDb ?? await getDb();
-  try { db.run(`
+function toInt(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  const n = typeof value === "number" ? value : parseInt(value, 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+function toBool(value: string | number | null | undefined): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  return value === "1" || value === "true";
+}
+
+export async function initEventsTables(): Promise<void> {
+  await run(`
     CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       artist_id TEXT,
@@ -113,8 +124,8 @@ export async function initEventsTables(existingDb?: import("sql.js").Database): 
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-  `); } catch {}
-  try { db.run(`
+  `);
+  await run(`
     CREATE TABLE IF NOT EXISTS rsvps (
       id TEXT PRIMARY KEY,
       member_id TEXT NOT NULL,
@@ -124,8 +135,8 @@ export async function initEventsTables(existingDb?: import("sql.js").Database): 
       updated_at TEXT NOT NULL,
       UNIQUE(member_id, event_id)
     );
-  `); } catch {}
-  try { db.run(`
+  `);
+  await run(`
     CREATE TABLE IF NOT EXISTS sync_status (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
@@ -139,19 +150,19 @@ export async function initEventsTables(existingDb?: import("sql.js").Database): 
       is_demo_data INTEGER NOT NULL DEFAULT 0,
       synced_at TEXT NOT NULL
     );
-  `); } catch {}
-  try { db.run("ALTER TABLE events ADD COLUMN artist_id TEXT"); } catch {}
-  await saveDb(db);
-  return db;
+  `);
+  try {
+    await run("ALTER TABLE events ADD COLUMN artist_id TEXT");
+  } catch {}
 }
 
 export async function seedEventsIfEmpty(): Promise<void> {
-  const db = await initEventsTables();
-  const existing = db.exec("SELECT COUNT(*) as count FROM events");
-  const count = (existing[0]?.values[0][0] as number) ?? 0;
+  await initEventsTables();
+  const existing = await querySingle("SELECT COUNT(*) as count FROM events");
+  const count = toInt(existing?.count);
   if (count > 0) return;
   for (const event of DEMO_EVENTS) {
-    db.run(
+    await run(
       `INSERT OR IGNORE INTO events (
         id, title, date, time, venue, city, country, image_url, ticket_url, bandsintown_url,
         type, status, featured, visible, synced_at, created_at, updated_at
@@ -165,7 +176,6 @@ export async function seedEventsIfEmpty(): Promise<void> {
       ]
     );
   }
-  await saveDb(db);
 }
 
 export function rowToEvent(row: Record<string, string | number | null>): PlatformEvent {
@@ -183,8 +193,8 @@ export function rowToEvent(row: Record<string, string | number | null>): Platfor
     bandsintownUrl: (row.bandsintown_url as string) || undefined,
     type: row.type as PlatformEvent["type"],
     status: row.status as PlatformEvent["status"],
-    featured: Boolean(row.featured as number),
-    visible: Boolean(row.visible as number),
+    featured: toBool(row.featured),
+    visible: toBool(row.visible),
     syncedAt: (row.synced_at as string) || undefined,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -192,29 +202,15 @@ export function rowToEvent(row: Record<string, string | number | null>): Platfor
 }
 
 export async function getEventsByArtist(artistId: string): Promise<PlatformEvent[]> {
-  const db = await initEventsTables();
-  const result = db.exec("SELECT * FROM events WHERE artist_id = ? ORDER BY date ASC", [artistId]);
-  if (result.length === 0) return [];
-  const columns = result[0].columns;
-  return result[0].values.map((row: any[]) => {
-    const record: Record<string, string | number | null> = {};
-    columns.forEach((col: string, i: number) => { record[col] = row[i]; });
-    return rowToEvent(record);
-  });
+  await initEventsTables();
+  const rows = await queryAll("SELECT * FROM events WHERE artist_id = ? ORDER BY date ASC", [artistId]);
+  return rows.map(rowToEvent);
 }
 
 export async function getAllEvents(): Promise<PlatformEvent[]> {
-  const db = await initEventsTables();
-  const result = db.exec("SELECT * FROM events ORDER BY date ASC");
-  if (result.length === 0) return [];
-  const columns = result[0].columns;
-  return result[0].values.map((row: any[]) => {
-    const record: Record<string, string | number | null> = {};
-    columns.forEach((col: string, i: number) => {
-      record[col] = row[i] as string | number | null;
-    });
-    return rowToEvent(record);
-  });
+  await initEventsTables();
+  const rows = await queryAll("SELECT * FROM events ORDER BY date ASC");
+  return rows.map(rowToEvent);
 }
 
 export async function getVisibleEvents(): Promise<PlatformEvent[]> {
@@ -226,7 +222,6 @@ export async function getVisibleEvents(): Promise<PlatformEvent[]> {
 export async function getPublicEvents(limit?: number): Promise<PlatformEvent[]> {
   await seedEventsIfEmpty();
   let events = await getVisibleEvents();
-  // Auto-sync from Ticketmaster if db is empty and an API key is available
   if (events.length === 0 && process.env.TICKETMASTER_API_KEY) {
     try {
       const { syncEventsFromBandsintown } = await import("./sync");
@@ -248,21 +243,16 @@ export async function getMemberEvents(): Promise<PlatformEvent[]> {
 }
 
 export async function getEventById(id: string): Promise<PlatformEvent | undefined> {
-  const db = await initEventsTables();
-  const result = db.exec("SELECT * FROM events WHERE id = ?", [id]);
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const columns = result[0].columns;
-  const record: Record<string, string | number | null> = {};
-  columns.forEach((col: string, i: number) => {
-    record[col] = result[0].values[0][i] as string | number | null;
-  });
-  return rowToEvent(record);
+  await initEventsTables();
+  const row = await querySingle("SELECT * FROM events WHERE id = ?", [id]);
+  if (!row) return undefined;
+  return rowToEvent(row);
 }
 
 export async function upsertEvents(events: PlatformEvent[]): Promise<void> {
-  const db = await initEventsTables();
+  await initEventsTables();
   for (const event of events) {
-    db.run(
+    await run(
       `
       INSERT INTO events (
         id, artist_id, title, date, time, venue, city, country, image_url, ticket_url, bandsintown_url,
@@ -304,26 +294,23 @@ export async function upsertEvents(events: PlatformEvent[]): Promise<void> {
       ]
     );
   }
-  await saveDb(db);
 }
 
 export async function updateEventVisibility(id: string, visible: boolean): Promise<PlatformEvent | undefined> {
-  const db = await initEventsTables();
-  db.run("UPDATE events SET visible = ?, updated_at = ? WHERE id = ?", [visible ? 1 : 0, new Date().toISOString(), id]);
-  await saveDb(db);
+  await initEventsTables();
+  await run("UPDATE events SET visible = ?, updated_at = ? WHERE id = ?", [visible ? 1 : 0, new Date().toISOString(), id]);
   return getEventById(id);
 }
 
 export async function updateEventFeatured(id: string, featured: boolean): Promise<PlatformEvent | undefined> {
-  const db = await initEventsTables();
-  db.run("UPDATE events SET featured = ?, updated_at = ? WHERE id = ?", [featured ? 1 : 0, new Date().toISOString(), id]);
-  await saveDb(db);
+  await initEventsTables();
+  await run("UPDATE events SET featured = ?, updated_at = ? WHERE id = ?", [featured ? 1 : 0, new Date().toISOString(), id]);
   return getEventById(id);
 }
 
 export async function createVipEvent(event: PlatformEvent): Promise<void> {
-  const db = await initEventsTables();
-  db.run(
+  await initEventsTables();
+  await run(
     `
     INSERT INTO events (
       id, artist_id, title, date, time, venue, city, country, image_url, ticket_url, bandsintown_url,
@@ -351,79 +338,58 @@ export async function createVipEvent(event: PlatformEvent): Promise<void> {
       event.updatedAt,
     ]
   );
-  await saveDb(db);
 }
 
 export async function deleteImportedEvents(): Promise<number> {
-  const db = await initEventsTables();
-  const before = db.exec("SELECT COUNT(*) as count FROM events WHERE type = 'imported'");
-  db.run("DELETE FROM events WHERE type = 'imported'");
-  const after = db.exec("SELECT COUNT(*) as count FROM events WHERE type = 'imported'");
-  await saveDb(db);
-  const beforeCount = (before[0]?.values[0][0] as number) || 0;
-  const afterCount = (after[0]?.values[0][0] as number) || 0;
-  return beforeCount - afterCount;
+  await initEventsTables();
+  const before = await querySingle("SELECT COUNT(*) as count FROM events WHERE type = 'imported'");
+  await run("DELETE FROM events WHERE type = 'imported'");
+  const after = await querySingle("SELECT COUNT(*) as count FROM events WHERE type = 'imported'");
+  return toInt(before?.count) - toInt(after?.count);
 }
 
 export async function deleteEvent(id: string): Promise<boolean> {
-  const db = await initEventsTables();
-  const before = db.exec("SELECT COUNT(*) as count FROM events");
-  db.run("DELETE FROM events WHERE id = ?", [id]);
-  const after = db.exec("SELECT COUNT(*) as count FROM events");
-  await saveDb(db);
-  const beforeCount = (before[0]?.values[0][0] as number) || 0;
-  const afterCount = (after[0]?.values[0][0] as number) || 0;
-  return afterCount < beforeCount;
+  await initEventsTables();
+  const before = await querySingle("SELECT COUNT(*) as count FROM events");
+  await run("DELETE FROM events WHERE id = ?", [id]);
+  const after = await querySingle("SELECT COUNT(*) as count FROM events");
+  return toInt(after?.count) < toInt(before?.count);
 }
 
 export async function getRsvpsForEvent(eventId: string): Promise<EventRsvp[]> {
-  const db = await initEventsTables();
-  const result = db.exec("SELECT * FROM rsvps WHERE event_id = ?", [eventId]);
-  if (result.length === 0) return [];
-  const columns = result[0].columns;
-  return result[0].values.map((row: any[]) => {
-    const record: Record<string, string | null> = {};
-    columns.forEach((col: string, i: number) => {
-      record[col] = row[i] as string | null;
-    });
-    return {
-      id: record.id!,
-      memberId: record.member_id!,
-      eventId: record.event_id!,
-      status: record.status as EventRsvp["status"],
-      createdAt: record.created_at!,
-      updatedAt: record.updated_at!,
-    };
-  });
+  await initEventsTables();
+  const rows = await queryAll("SELECT * FROM rsvps WHERE event_id = ?", [eventId]);
+  return rows.map((row) => ({
+    id: row.id!,
+    memberId: row.member_id!,
+    eventId: row.event_id!,
+    status: row.status as EventRsvp["status"],
+    createdAt: row.created_at!,
+    updatedAt: row.updated_at!,
+  }));
 }
 
 export async function getMemberRsvps(memberId: string): Promise<Record<string, EventRsvp["status"]>> {
-  const db = await initEventsTables();
-  const result = db.exec("SELECT event_id, status FROM rsvps WHERE member_id = ?", [memberId]);
-  if (result.length === 0) return {};
+  await initEventsTables();
+  const rows = await queryAll("SELECT event_id, status FROM rsvps WHERE member_id = ?", [memberId]);
   const map: Record<string, EventRsvp["status"]> = {};
-  result[0].values.forEach((row: any[]) => {
-    map[row[0] as string] = row[1] as EventRsvp["status"];
-  });
+  for (const row of rows) {
+    map[row.event_id!] = row.status as EventRsvp["status"];
+  }
   return map;
 }
 
 export async function getRsvp(memberId: string, eventId: string): Promise<EventRsvp | undefined> {
-  const db = await initEventsTables();
-  const result = db.exec("SELECT * FROM rsvps WHERE member_id = ? AND event_id = ?", [memberId, eventId]);
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const columns = result[0].columns;
-  const record: Record<string, string | null> = {};
-  columns.forEach((col: string, i: number) => {
-    record[col] = result[0].values[0][i] as string | null;
-  });
+  await initEventsTables();
+  const row = await querySingle("SELECT * FROM rsvps WHERE member_id = ? AND event_id = ?", [memberId, eventId]);
+  if (!row) return undefined;
   return {
-    id: record.id!,
-    memberId: record.member_id!,
-    eventId: record.event_id!,
-    status: record.status as EventRsvp["status"],
-    createdAt: record.created_at!,
-    updatedAt: record.updated_at!,
+    id: row.id!,
+    memberId: row.member_id!,
+    eventId: row.event_id!,
+    status: row.status as EventRsvp["status"],
+    createdAt: row.created_at!,
+    updatedAt: row.updated_at!,
   };
 }
 
@@ -441,8 +407,8 @@ export interface RsvpWithMember {
 }
 
 export async function getRsvpsWithMemberDetails(eventId: string): Promise<RsvpWithMember[]> {
-  const db = await initEventsTables();
-  const result = db.exec(
+  await initEventsTables();
+  const rows = await queryAll(
     `SELECT r.id, r.member_id, r.event_id, r.status, r.created_at, r.updated_at,
             m.first_name, m.last_name, m.email, m.tier, m.status as member_status
      FROM rsvps r
@@ -451,24 +417,18 @@ export async function getRsvpsWithMemberDetails(eventId: string): Promise<RsvpWi
      ORDER BY r.created_at DESC`,
     [eventId]
   );
-  if (result.length === 0) return [];
-  const columns = result[0].columns;
-  return result[0].values.map((row: any[]) => {
-    const rec: Record<string, any> = {};
-    columns.forEach((col: string, i: number) => { rec[col] = row[i]; });
-    return {
-      id: rec.id,
-      memberId: rec.member_id,
-      memberName: rec.first_name && rec.last_name ? `${rec.first_name} ${rec.last_name}` : rec.member_id,
-      memberEmail: rec.email ?? "",
-      memberTier: rec.tier ?? "",
-      memberStatus: rec.member_status ?? "",
-      eventId: rec.event_id,
-      status: rec.status as EventRsvp["status"],
-      createdAt: rec.created_at,
-      updatedAt: rec.updated_at,
-    };
-  });
+  return rows.map((rec) => ({
+    id: rec.id!,
+    memberId: rec.member_id!,
+    memberName: rec.first_name && rec.last_name ? `${rec.first_name} ${rec.last_name}` : rec.member_id!,
+    memberEmail: rec.email ?? "",
+    memberTier: rec.tier ?? "",
+    memberStatus: rec.member_status ?? "",
+    eventId: rec.event_id!,
+    status: rec.status as EventRsvp["status"],
+    createdAt: rec.created_at!,
+    updatedAt: rec.updated_at!,
+  }));
 }
 
 export interface RsvpEventSummary {
@@ -484,8 +444,8 @@ export interface RsvpEventSummary {
 }
 
 export async function getAllRsvpSummaries(): Promise<RsvpEventSummary[]> {
-  const db = await initEventsTables();
-  const result = db.exec(`
+  await initEventsTables();
+  const rows = await queryAll(`
     SELECT e.id, e.title, e.date, e.venue, e.city,
       COALESCE(SUM(CASE WHEN r.status = 'going' THEN 1 ELSE 0 END), 0) as going,
       COALESCE(SUM(CASE WHEN r.status = 'interested' THEN 1 ELSE 0 END), 0) as interested,
@@ -496,64 +456,51 @@ export async function getAllRsvpSummaries(): Promise<RsvpEventSummary[]> {
     GROUP BY e.id
     ORDER BY e.date ASC
   `);
-  if (result.length === 0) return [];
-  const cols = result[0].columns;
-  return result[0].values.map((row: any[]) => {
-    const rec: Record<string, any> = {};
-    cols.forEach((c: string, i: number) => { rec[c] = row[i]; });
-    return {
-      eventId: rec.id,
-      eventTitle: rec.title,
-      eventDate: rec.date,
-      eventVenue: rec.venue,
-      eventCity: rec.city,
-      going: rec.going ?? 0,
-      interested: rec.interested ?? 0,
-      notGoing: rec.not_going ?? 0,
-      total: rec.total ?? 0,
-    };
-  });
+  return rows.map((rec) => ({
+    eventId: rec.id!,
+    eventTitle: rec.title!,
+    eventDate: rec.date!,
+    eventVenue: rec.venue!,
+    eventCity: rec.city!,
+    going: toInt(rec.going),
+    interested: toInt(rec.interested),
+    notGoing: toInt(rec.not_going),
+    total: toInt(rec.total),
+  }));
 }
 
 export async function upsertRsvp(rsvp: EventRsvp): Promise<void> {
-  const db = await initEventsTables();
-  // DELETE + INSERT guarantees the status is always updated regardless of sql.js ON CONFLICT quirks
-  db.run(`DELETE FROM rsvps WHERE member_id = ? AND event_id = ?`, [rsvp.memberId, rsvp.eventId]);
-  db.run(
+  await initEventsTables();
+  await run(`DELETE FROM rsvps WHERE member_id = ? AND event_id = ?`, [rsvp.memberId, rsvp.eventId]);
+  await run(
     `INSERT INTO rsvps (id, member_id, event_id, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [rsvp.id, rsvp.memberId, rsvp.eventId, rsvp.status, rsvp.createdAt, rsvp.updatedAt]
   );
-  await saveDb(db);
 }
 
 export async function getLatestSyncStatus(): Promise<SyncStatus | undefined> {
-  const db = await initEventsTables();
-  const result = db.exec("SELECT * FROM sync_status ORDER BY synced_at DESC LIMIT 1");
-  if (result.length === 0 || result[0].values.length === 0) return undefined;
-  const columns = result[0].columns;
-  const record: Record<string, string | number | null> = {};
-  columns.forEach((col: string, i: number) => {
-    record[col] = result[0].values[0][i] as string | number | null;
-  });
+  await initEventsTables();
+  const row = await querySingle("SELECT * FROM sync_status ORDER BY synced_at DESC LIMIT 1");
+  if (!row) return undefined;
   return {
-    id: record.id as string,
-    source: record.source as string,
-    status: record.status as SyncStatus["status"],
-    endpoint: (record.endpoint as string) || "",
-    importedCount: (record.imported_count as number) ?? 0,
-    createdCount: (record.created_count as number) ?? 0,
-    updatedCount: (record.updated_count as number) ?? 0,
-    apiStatus: record.api_status as number | undefined,
-    errorMessage: (record.error_message as string) || undefined,
-    isDemoData: Boolean(record.is_demo_data as number),
-    syncedAt: record.synced_at as string,
+    id: row.id!,
+    source: row.source!,
+    status: row.status as SyncStatus["status"],
+    endpoint: row.endpoint!,
+    importedCount: toInt(row.imported_count),
+    createdCount: toInt(row.created_count),
+    updatedCount: toInt(row.updated_count),
+    apiStatus: row.api_status ? toInt(row.api_status) : undefined,
+    errorMessage: row.error_message || undefined,
+    isDemoData: toBool(row.is_demo_data),
+    syncedAt: row.synced_at!,
   };
 }
 
 export async function recordSyncStatus(status: SyncStatus): Promise<void> {
-  const db = await initEventsTables();
-  db.run(
+  await initEventsTables();
+  await run(
     `
     INSERT INTO sync_status (id, source, status, endpoint, imported_count, created_count, updated_count, api_status, error_message, is_demo_data, synced_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -583,5 +530,4 @@ export async function recordSyncStatus(status: SyncStatus): Promise<void> {
       status.syncedAt,
     ]
   );
-  await saveDb(db);
 }
