@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPublicEvents, getMemberEvents, getAllEvents } from "@/lib/events-data";
+import { getMemberById } from "@/lib/members";
 import { syncEventsFromBandsintown } from "@/lib/sync";
 import { requireAuth } from "@/lib/auth";
 
@@ -16,8 +17,9 @@ export async function GET(request: Request) {
     }
 
     if (scope === "member") {
-      await requireAuth("member");
-      const events = await getMemberEvents();
+      const session = await requireAuth("member");
+      const member = await getMemberById(session.id);
+      const events = await getMemberEvents(member?.artistId);
       return NextResponse.json({ events });
     }
 

@@ -1,14 +1,15 @@
 import "server-only";
-import { getActiveArtist } from "./members";
+import { getActiveArtists } from "./members";
 import { type Artist } from "./data";
 
 /**
- * Returns the artist marked as is_active=true in the DB.
- * Used by public pages to drive dynamic artist branding.
+ * Returns the first active artist from the DB.
+ * Used by public pages that need a default artist brand.
  */
 export async function getPrimaryArtist(): Promise<Artist | null> {
   try {
-    return (await getActiveArtist()) ?? null;
+    const artists = await getActiveArtists();
+    return artists[0] ?? null;
   } catch {
     return null;
   }

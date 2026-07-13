@@ -76,10 +76,10 @@ export function getEndpoint(apiKey: string, keyword?: string): string {
  * Returns an empty array with a detailed error message if no API key is
  * configured or if the request fails. No demo/fallback data is returned.
  */
-export async function fetchTicketmasterEvents(): Promise<TicketmasterFetchResult> {
+export async function fetchTicketmasterEvents(keyword?: string): Promise<TicketmasterFetchResult> {
   const apiKey = process.env.TICKETMASTER_API_KEY;
-  const keyword = await getArtistKeyword();
-  const endpoint = apiKey ? getKeywordEndpoint(apiKey, keyword) : getKeywordEndpoint("{{TICKETMASTER_API_KEY}}", keyword);
+  const searchKeyword = keyword || (await getArtistKeyword());
+  const endpoint = apiKey ? getKeywordEndpoint(apiKey, searchKeyword) : getKeywordEndpoint("{{TICKETMASTER_API_KEY}}", searchKeyword);
 
   if (!apiKey) {
     const message =
@@ -88,11 +88,11 @@ export async function fetchTicketmasterEvents(): Promise<TicketmasterFetchResult
     return { events: [], endpoint, source: "ticketmaster", errorMessage: message };
   }
 
-  console.log(`[Ticketmaster] Fetching events for artist: "${keyword}"`);
+  console.log(`[Ticketmaster] Fetching events for artist: "${searchKeyword}"`);
 
   try {
-    const result = await tryFetch(getKeywordEndpoint(apiKey, keyword));
-    if (result.ok) return buildResult(result, result.endpoint);
+    const result = await tryFetch(getKeywordEndpoint(apiKey, searchKeyword));
+    if (result.ok) return buildResult(result, result.endpoint, searchKeyword);
     throw new Error(result.errorMessage || `Ticketmaster API returned ${result.apiStatus}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -103,12 +103,13 @@ export async function fetchTicketmasterEvents(): Promise<TicketmasterFetchResult
 
 function buildResult(
   result: Awaited<ReturnType<typeof tryFetch>>,
-  endpoint: string
+  endpoint: string,
+  keyword: string
 ): TicketmasterFetchResult {
   const body = result.data as TmResponse | undefined;
   const rawEvents: TmEvent[] = body?._embedded?.events ?? [];
   const events = rawEvents.map(mapTmEvent);
-  console.log(`[Ticketmaster] Imported ${events.length} events.`);
+  console.log(`[Ticketmaster] Imported ${events.length} events for "${keyword}".`);
   return {
     events,
     endpoint,

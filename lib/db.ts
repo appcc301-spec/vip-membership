@@ -336,6 +336,17 @@ export async function getArtistById(id: string): Promise<Artist | undefined> {
   return rowToArtist(row);
 }
 
+export async function getArtistBySlugRecord(slug: string): Promise<Artist | undefined> {
+  const row = await querySingle("SELECT * FROM artists WHERE slug = ?", [slug]);
+  if (!row) return undefined;
+  return rowToArtist(row);
+}
+
+export async function getActiveArtistsRecords(): Promise<Artist[]> {
+  const rows = await queryAll("SELECT * FROM artists WHERE status = 'active' AND is_archived = 0 ORDER BY name ASC");
+  return rows.map(rowToArtist);
+}
+
 export async function createArtistRecord(artist: Artist): Promise<void> {
   const count = await querySingle("SELECT COUNT(*) as count FROM artists");
   const isFirst = (count?.count as string) === "0";
@@ -367,13 +378,12 @@ export async function setArtistActiveRecord(id: string): Promise<Artist | undefi
   const existing = await getArtistById(id);
   if (!existing) return undefined;
   const now = new Date().toISOString();
-  await run("UPDATE artists SET is_active = 0, updated_at = ? WHERE is_active = 1", [now]);
   await run("UPDATE artists SET is_active = 1, is_archived = 0, status = 'active', updated_at = ? WHERE id = ?", [now, id]);
   return getArtistById(id);
 }
 
 export async function getActiveArtistRecord(): Promise<Artist | undefined> {
-  const row = await querySingle("SELECT * FROM artists WHERE is_active = 1 LIMIT 1");
+  const row = await querySingle("SELECT * FROM artists WHERE status = 'active' AND is_archived = 0 ORDER BY name ASC LIMIT 1");
   if (!row) return undefined;
   return rowToArtist(row);
 }

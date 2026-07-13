@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getMemberById } from "@/lib/members";
+import { getMemberById, getArtistById } from "@/lib/members";
 import { getMemberEvents } from "@/lib/events-data";
 import { getSession } from "@/lib/auth";
 import { VIPCard } from "@/components/VIPCard";
@@ -13,6 +13,8 @@ import { EXCLUSIVE_CONTENT } from "@/lib/data";
 export default async function MemberDashboardPage() {
   const session = await getSession();
   const member = await getMemberById(session?.id || "");
+  const artist = member?.artistId ? await getArtistById(member.artistId) : null;
+  const artistName = artist?.name || "VIP";
 
   if (!member) {
     return (
@@ -35,7 +37,7 @@ export default async function MemberDashboardPage() {
   // Safe event fetch — gracefully handle missing events table
   let upcomingEvents: Awaited<ReturnType<typeof getMemberEvents>> = [];
   try {
-    upcomingEvents = (await getMemberEvents()).slice(0, 3);
+    upcomingEvents = (await getMemberEvents(member.artistId)).slice(0, 3);
   } catch {}
 
   // ── Pending membership screen ────────────────────────────────────────────────
@@ -57,7 +59,7 @@ export default async function MemberDashboardPage() {
           <h1 className="text-2xl font-playfair text-gold-gradient">
             Welcome, {member.personal.firstName}
           </h1>
-          <p className="text-white/60">Your VIP membership account is ready.</p>
+          <p className="text-white/60">Your {artistName} VIP membership account is ready.</p>
         </div>
 
         {/* Pending notice */}
@@ -118,7 +120,7 @@ export default async function MemberDashboardPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-playfair text-gold-gradient">Welcome, {member.personal.firstName}</h1>
-        <p className="text-white/60">Your private VIP lounge and digital membership card.</p>
+        <p className="text-white/60">Your {artistName} private VIP lounge and digital membership card.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
