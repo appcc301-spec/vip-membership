@@ -3,17 +3,15 @@ import { Hero } from "@/components/Hero";
 import { EventCard } from "@/components/EventCard";
 import { Button } from "@/components/ui/button";
 import { getPublicEvents } from "@/lib/events-data";
-import { getPrimaryArtist, DEFAULT_ARTIST_NAME } from "@/lib/platform";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [events, artist] = await Promise.all([getPublicEvents(3), getPrimaryArtist()]);
-  const artistName = artist?.name || DEFAULT_ARTIST_NAME;
+  const events = await getPublicEvents(3);
 
   return (
     <>
-      <Hero artistName={artistName} bannerUrl={artist?.bannerUrl} logoUrl={artist?.logoUrl} />
+      <Hero />
       <section className="py-20 px-4 sm:px-6 lg:px-8 xl:px-12">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
@@ -21,7 +19,7 @@ export default async function HomePage() {
               Welcome to the Inner Circle
             </h2>
             <p className="text-white/70 max-w-2xl mx-auto">
-              {artistName} VIP Membership is an invitation-only experience. Memberships are created and managed by our team to ensure every member receives the premium treatment they deserve.
+              An invitation-only VIP experience. Memberships are created and managed by our team to ensure every member receives the premium treatment they deserve.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">

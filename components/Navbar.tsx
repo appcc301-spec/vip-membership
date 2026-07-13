@@ -13,7 +13,7 @@ const navLinks = [
   { label: "Contact", href: "/contact" },
 ];
 
-export function Navbar({ artistName = "Robert Plant" }: { artistName?: string }) {
+export function Navbar() {
   const [open, setOpen] = useState(false);
 
   return (
@@ -22,10 +22,10 @@ export function Navbar({ artistName = "Robert Plant" }: { artistName?: string })
         <div className="flex items-center justify-between h-20">
           <Link href="/" className="flex items-center gap-3">
             <span className="text-2xl font-playfair text-gold-gradient tracking-tight">
-              {artistName}
+              VIP Platform
             </span>
             <span className="hidden sm:inline text-xs uppercase tracking-widest text-white/60 border-l border-white/20 pl-3">
-              VIP
+              Membership
             </span>
           </Link>
 
